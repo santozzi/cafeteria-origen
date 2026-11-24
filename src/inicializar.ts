@@ -61,16 +61,37 @@ export const USUARIOS_INICIALES: UsuarioInicial[] = [
 
 export async function inicializarBase(): Promise<void> {
   // --- Usuarios -------------------------------------------------------------
-  for (const usuario of USUARIOS_INICIALES) {
-    // FALLA: la contraseña se guarda tal cual, sin hash ni salt.
-    await db.query(
-      `INSERT INTO usuarios (username, password, rol, nombre)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (username) DO NOTHING`,
-      [usuario.username, usuario.password, usuario.rol, usuario.nombre]
+  const { rows: existentes } = await db.query<{ username: string; password: string }>(
+      'SELECT username, password FROM usuarios'
     );
-  }
+    const porUsername = new Map(existentes.map((u) => [u.username, u.password]));
 
+    for (const usuario of USUARIOS_INICIALES) {
+      const guardada = porUsername.get(usuario.username);
+
+      if (!guardada) {
+        const hash = await bcrypt.hash(usuario.password, COSTO_BCRYPT);
+        await db.query(
+          `INSERT INTO usuarios (username, password, rol, nombre)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (username) DO NOTHING`,
+          [usuario.username, hash, usuario.rol, usuario.nombre]
+        );
+        continue;
+      }
+
+      // Migración: si ya estaba en claro, se hashea el valor existente
+      // (así se conserva la contraseña que tenía el usuario).
+      if (!esHashBcrypt(guardada)) {
+        const hash = await bcrypt.hash(guardada, COSTO_BCRYPT);
+        await db.query(
+          'UPDATE usuarios SET password = $1 WHERE username = $2',
+          [hash, usuario.username]
+        );
+        console.log(`[init] contraseña de "${usuario.username}" migrada a bcrypt.`);
+      }
+    }
+  
   // --- Catálogo -------------------------------------------------------------
   for (const producto of CATALOGO) {
     await db.query(
