@@ -1,6 +1,8 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
 import { crearSesion, destruirSesion, obtenerSesion, limpiarCookieSesion } from '../middleware/sesion';
+import rateLimit from 'express-rate-limit';
+
 
 const router = express.Router();
 
@@ -15,7 +17,21 @@ const router = express.Router();
  *  - Sin rate limiting ni bloqueo: fuerza bruta ilimitada.
  *  - El identificador de sesión no se regenera (fijación de sesión).
  */
-router.post('/login', async (req, res, next) => {
+
+// Limita los intentos de inicio de sesión para prevenir ataques de fuerza bruta.
+const limiterLogin = rateLimit({
+  windowMs: 15 * 60 * 1000, // Ventana de 15 minutos.
+  limit: 5, // Máximo 5 intentos.
+  standardHeaders: true, //informa el límite mediante encabezados HTTP
+  legacyHeaders: false, //desactiva los encabezados antiguos
+  skipSuccessfulRequests: true, //no cuenta los intentos exitosos
+  message: { 
+    error: 'Demasiados intentos. Intente nuevamente en 15 minutos.',
+  },
+});
+
+
+router.post('/login', limiterLogin, async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
 
