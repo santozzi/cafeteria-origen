@@ -27,6 +27,8 @@ import type { Request, Response } from 'express';
 import type { Sesion, UsuarioSesion } from '../tipos';
 
 import { randomUUID } from 'node:crypto';
+const DURACION_INACTIVIDAD = 30 * 60 * 1000; // tiempo maximo permitido sin actividdad (30 minutos)
+const DURACION_MAXIMA = 8 * 60 * 60 * 1000; // tiempo maximo de una sesion (8 horas)
 
 //configuracion de la seguridad de la cookie
 const secureCookie = process.env.NODE_ENV === 'production';
@@ -64,10 +66,11 @@ export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion)
   const id = randomUUID(); //(corregido) 
 
   // FALLA: la sesión nunca expira.
+  const ahora = Date.now(); //registra el momento de creación de la sesión
   sesiones.set(id, {
     usuario,
-    creadaEn: Date.now(),
-    expiraEn: null,
+    creadaEn: ahora,
+    expiraEn: ahora + DURACION_INACTIVIDAD, // (corregido) se establece la expiración por inactividad
   });
 
   // FALLA: cookie sin httpOnly / secure / sameSite.
@@ -79,8 +82,35 @@ export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion)
 export function obtenerSesion(req: Request): Sesion | null {
   const cookies = leerCookies(req);
   const id = cookies.sid;
+
   if (!id) return null;
-  return sesiones.get(id) || null;
+
+  const sesion = sesiones.get(id);
+
+  if (!sesion) return null;
+
+  const ahora = Date.now();
+
+  // Calcula el vencimiento absoluto de la sesión.
+  const vencimientoAbsoluto = sesion.creadaEn + DURACION_MAXIMA;
+
+  // Comprueba si venció por inactividad o por tiempo máximo.
+  if (
+    sesion.expiraEn === null ||
+    ahora >= sesion.expiraEn ||
+    ahora >= vencimientoAbsoluto
+  ) {
+    sesiones.delete(id);
+    return null;
+  }
+
+  // Renueva el tiempo de inactividad sin superar las 8 horas.
+  sesion.expiraEn = Math.min(
+    ahora + DURACION_INACTIVIDAD,
+    vencimientoAbsoluto
+  );
+
+  return sesion;
 }
 
 /** Cierra la sesión en el servidor (debería llamarse en el logout). */
