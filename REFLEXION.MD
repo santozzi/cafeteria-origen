@@ -3,3 +3,10 @@
 - **Consultas parametrizadas y validación por defecto:** Usar siempre consultas parametrizadas (`$1`, `$2`) o un ORM/query builder seguro, y validar tipo, rango y listas blancas en el servidor (nunca confiar en el frontend) para evitar pedidos con montos negativos o filtros manipulables.
 - **Almacenamiento seguro de credenciales:** Nunca guardar contraseñas en texto plano; usar algoritmos de hashing lento con *salt* por usuario (`bcrypt` o `argon2`) desde el primer día.
 - **Pruebas automatizadas de seguridad en CI/CD:** Integrar análisis estático (`check:security`) y tests de seguridad (`test:seguridad`) en el pipeline de integración continua para detectar regresiones antes de llegar a producción.
+
+# Reflexion Tomas Mertian
+- **No alcanza con validar la entrada:** si después pintás los datos con HTML crudo, el navegador ejecuta lo que venga. La solución fue armar el DOM con `createElement` y `textContent`, también en las tablas del panel y en el parámetro `vista` de la URL.
+- **La CSP es una red de contención, no la única defensa:** configurar Helmet con `script-src 'self'` y `object-src 'none'` ayuda a limitar el daño, pero primero hay que escapar bien la salida.
+- **CSRF necesita algo que el atacante no pueda leer:** un token aleatorio en cookie y en header, validado con comparación segura, más el chequeo de `Origin`/`Referer`. No alcanza con confiar en que la petición venga con la cookie de sesión.
+- **La base también es parte de la seguridad:** la app tiene que conectarse con un usuario limitado (`origen_app`), no con el superusuario, y las contraseñas/secretos tienen que salir del entorno. Un secreto hardcodeado es un secreto que ya no es secreto.
+- **Los tests y el checker sirven para no volver atrás:** correr la batería de seguridad y el análisis estático después de cada cambio mostró que un arreglo en el cliente no siempre alcanza; hay que revisar también lo que devuelve el servidor.

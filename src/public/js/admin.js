@@ -7,6 +7,7 @@
   var API = '/api';
   var usuario = null;
   var productosCache = {};
+  var tokenCsrfCache = null;
 
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -15,19 +16,79 @@
     return Number(valor || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
   }
 
-  function raw(valor) {
-    // FALLA: no escapa nada. Usar escaparHtml() / textContent.
-    return String(valor == null ? '' : valor);
+  function crear(tag, clase, texto) {
+    var el = document.createElement(tag);
+    if (clase) el.className = clase;
+    if (texto !== undefined && texto !== null) el.textContent = String(texto);
+    return el;
   }
 
-  function escaparHtml(texto) {
-    var div = document.createElement('div');
-    div.textContent = texto == null ? '' : String(texto);
-    return div.innerHTML;
+  function limpiar(el) {
+    el.textContent = '';
+  }
+
+  function crearFila(celdas) {
+    var fila = document.createElement('tr');
+    celdas.forEach(function (celda) { fila.appendChild(celda); });
+    return fila;
+  }
+
+  function renderTabla(destino, columnas, filas, mensajeVacio) {
+    var thead = document.createElement('thead');
+    var filaTitulos = document.createElement('tr');
+    columnas.forEach(function (columna) {
+      filaTitulos.appendChild(crear('th', columna.clase || null, columna.texto));
+    });
+    thead.appendChild(filaTitulos);
+
+    var tbody = document.createElement('tbody');
+    if (!filas || filas.length === 0) {
+      var filaVacia = document.createElement('tr');
+      var celdaVacia = crear('td', 'empty', mensajeVacio || 'No hay datos.');
+      celdaVacia.colSpan = Math.max(1, columnas.length);
+      filaVacia.appendChild(celdaVacia);
+      tbody.appendChild(filaVacia);
+    } else {
+      filas.forEach(function (fila) { tbody.appendChild(fila); });
+    }
+
+    destino.replaceChildren(thead, tbody);
+  }
+
+  function renderKpis(destino, kpis) {
+    limpiar(destino);
+    kpis.forEach(function (kpi) {
+      var caja = crear('div', 'kpi');
+      caja.appendChild(crear('div', 'kpi-label', kpi.label));
+      caja.appendChild(crear('div', 'kpi-value', kpi.value));
+      destino.appendChild(caja);
+    });
+  }
+
+  function obtenerTokenCsrf() {
+    if (tokenCsrfCache) return Promise.resolve(tokenCsrfCache);
+    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
+      .then(function (res) { return res.ok ? res.json() : {}; })
+      .then(function (data) {
+        tokenCsrfCache = data.token || '';
+        return tokenCsrfCache;
+      })
+      .catch(function () { return ''; });
   }
 
   function api(url, opciones) {
-    return fetch(API + url, opciones).then(function (res) {
+    var opt = opciones ? Object.assign({}, opciones) : {};
+    var metodo = (opt.method || 'GET').toUpperCase();
+    var preparar = metodo === 'GET' || metodo === 'HEAD'
+      ? Promise.resolve('')
+      : obtenerTokenCsrf();
+
+    return preparar.then(function (token) {
+      if (token) {
+        opt.headers = Object.assign({}, opt.headers || {}, { 'X-CSRF-Token': token });
+      }
+      return fetch(API + url, opt);
+    }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
         return { ok: res.ok, status: res.status, data: data };
       });
@@ -60,7 +121,7 @@
 
   function feedback(el, mensaje, ok) {
     el.className = 'form-feedback ' + (ok ? 'is-ok' : 'is-error');
-    el.innerHTML = mensaje;
+    el.textContent = mensaje;
   }
 
   /* ------------------------------------------------------------------ login */
@@ -74,8 +135,6 @@
       password: $('#login-password').value,
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor (que incluye el
-        // usuario enviado) se pinta con innerHTML.
         feedback(caja, 'No pudimos iniciar sesión: ' + (resp.data.error || 'error desconocido'), false);
         return;
       }
@@ -89,15 +148,21 @@
       usuario = null;
       $('#vista-login').hidden = false;
       $('#vista-panel').hidden = true;
-      $('#admin-user').innerHTML = '';
+      $('#admin-user').textContent = '';
     });
   }
 
   function mostrarPanel() {
     $('#vista-login').hidden = true;
     $('#vista-panel').hidden = false;
-    $('#admin-user').innerHTML =
-      'Sesión de <strong>' + raw(usuario.nombre) + '</strong> · rol: <strong>' + raw(usuario.rol) + '</strong>';
+
+    var info = $('#admin-user');
+    limpiar(info);
+    info.appendChild(document.createTextNode('Sesión de '));
+    info.appendChild(crear('strong', null, usuario.nombre));
+    info.appendChild(document.createTextNode(' · rol: '));
+    info.appendChild(crear('strong', null, usuario.rol));
+
     $('#panel-bienvenida').textContent = 'Hola, ' + usuario.nombre;
     cargarTodo();
   }
@@ -121,7 +186,7 @@
             { label: 'Pedidos registrados', value: f.data.pedidos },
             {
               label: 'Producto más vendido',
-              value: mas ? raw(mas.nombre) : '—',
+              value: mas ? mas.nombre : '—',
             },
             {
               label: 'Unidades por tipo',
@@ -131,48 +196,65 @@
             },
           ];
 
-          $('#kpis').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          renderKpis($('#kpis'), kpis);
         });
       });
     });
   }
 
   /* --------------------------------------------------------------- pedidos */
-  function tablaPedidos(filas, conAcciones) {
-    if (!filas || filas.length === 0) return '<p class="empty">No hay pedidos.</p>';
+  function columnasPedidos(conAcciones) {
+    var columnas = [
+      { texto: '#' },
+      { texto: 'Mesa' },
+      { texto: 'Cliente' },
+      { texto: 'Estado' },
+      { texto: 'Total', clase: 'num' },
+      { texto: 'Fecha' },
+    ];
+    if (conAcciones) columnas.push({ texto: 'Acciones' });
+    return columnas;
+  }
 
-    var html = '<thead><tr><th>#</th><th>Mesa</th><th>Cliente</th><th>Estado</th>' +
-      '<th class="num">Total</th><th>Fecha</th>' + (conAcciones ? '<th>Acciones</th>' : '') + '</tr></thead><tbody>';
+  function filasPedidos(pedidos, conAcciones) {
+    return pedidos.map(function (p) {
+      var tdEstado = crear('td');
+      tdEstado.appendChild(crear('span', 'badge badge-' + p.estado, p.estado));
 
-    filas.forEach(function (p) {
-      html += '<tr>' +
-        '<td>' + raw(p.id) + '</td>' +
-        '<td>' + raw(p.mesa) + '</td>' +
-        '<td>' + raw(p.cliente) + '</td>' +
-        '<td><span class="badge badge-' + raw(p.estado) + '">' + raw(p.estado) + '</span></td>' +
-        '<td class="num">' + money(p.total) + '</td>' +
-        '<td>' + new Date(p.creado_en).toLocaleString('es-AR') + '</td>' +
-        (conAcciones
-          ? '<td><select data-pedido="' + raw(p.id) + '" class="sel-estado">' +
-            ['abierto', 'preparando', 'listo', 'entregado'].map(function (e) {
-              return '<option value="' + e + '"' + (e === p.estado ? ' selected' : '') + '>' + e + '</option>';
-            }).join('') +
-            '</select></td>'
-          : '') +
-        '</tr>';
+      var celdas = [
+        crear('td', null, p.id),
+        crear('td', null, p.mesa),
+        crear('td', null, p.cliente),
+        tdEstado,
+        crear('td', 'num', money(p.total)),
+        crear('td', null, new Date(p.creado_en).toLocaleString('es-AR')),
+      ];
+
+      if (conAcciones) {
+        var tdAcciones = crear('td');
+        var select = document.createElement('select');
+        select.className = 'sel-estado';
+        select.setAttribute('data-pedido', p.id);
+        ['abierto', 'preparando', 'listo', 'entregado'].forEach(function (estado) {
+          var opcion = document.createElement('option');
+          opcion.value = estado;
+          opcion.textContent = estado;
+          opcion.selected = estado === p.estado;
+          select.appendChild(opcion);
+        });
+        tdAcciones.appendChild(select);
+        celdas.push(tdAcciones);
+      }
+
+      return crearFila(celdas);
     });
-
-    return html + '</tbody>';
   }
 
   function cargarPedidos() {
     api('/pedidos').then(function (resp) {
       var pedidos = resp.data.pedidos || [];
-      $('#tabla-pedidos').innerHTML = tablaPedidos(pedidos, true);
-      $('#tabla-ultimos').innerHTML = tablaPedidos(pedidos.slice(0, 5), false);
+      renderTabla($('#tabla-pedidos'), columnasPedidos(true), filasPedidos(pedidos, true), 'No hay pedidos.');
+      renderTabla($('#tabla-ultimos'), columnasPedidos(false), filasPedidos(pedidos.slice(0, 5), false), 'No hay pedidos.');
     });
   }
 
@@ -193,22 +275,39 @@
     api('/productos').then(function (resp) {
       var productos = resp.data.productos || [];
       productosCache = {};
-      var html = '<thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Origen</th>' +
-        '<th class="num">Precio</th><th>Acciones</th></tr></thead><tbody>';
 
-      productos.forEach(function (p) {
+      var filas = productos.map(function (p) {
         productosCache[p.id] = p;
-        html += '<tr>' +
-          '<td>' + raw(p.id) + '</td>' +
-          '<td>' + raw(p.nombre) + '</td>' +
-          '<td>' + raw(p.tipo) + '</td>' +
-          '<td>' + raw(p.variedad || '—') + '</td>' +
-          '<td class="num">' + money(p.precio) + '</td>' +
-          '<td><button class="link-danger" data-borrar="' + raw(p.id) + '">Borrar</button></td>' +
-          '</tr>';
+
+        var tdAcciones = crear('td');
+        var boton = crear('button', 'link-danger', 'Borrar');
+        boton.type = 'button';
+        boton.setAttribute('data-borrar', p.id);
+        tdAcciones.appendChild(boton);
+
+        return crearFila([
+          crear('td', null, p.id),
+          crear('td', null, p.nombre),
+          crear('td', null, p.tipo),
+          crear('td', null, p.variedad || '—'),
+          crear('td', 'num', money(p.precio)),
+          tdAcciones,
+        ]);
       });
 
-      $('#tabla-productos').innerHTML = html + '</tbody>';
+      renderTabla(
+        $('#tabla-productos'),
+        [
+          { texto: '#' },
+          { texto: 'Nombre' },
+          { texto: 'Tipo' },
+          { texto: 'Origen' },
+          { texto: 'Precio', clase: 'num' },
+          { texto: 'Acciones' },
+        ],
+        filas,
+        'No hay productos.'
+      );
     });
   }
 
@@ -299,12 +398,9 @@
             { label: 'Facturación', value: money(f.data.facturado) },
             { label: 'Pedidos', value: f.data.pedidos },
             { label: 'Ticket promedio', value: money(t.data.promedio) },
-            { label: 'Más vendido', value: mas ? raw(mas.nombre) + ' (' + raw(mas.unidades) + ')' : '—' },
+            { label: 'Más vendido', value: mas ? mas.nombre + ' (' + mas.unidades + ')' : '—' },
           ];
-          $('#kpis-reportes').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          renderKpis($('#kpis-reportes'), kpis);
         });
       });
     });
@@ -317,17 +413,31 @@
     api('/reportes/ventas-por-variedad?variedad=' + encodeURIComponent(variedad)).then(function (resp) {
       if (!resp.ok) {
         feedback(caja, 'Error: ' + (resp.data.error || 'desconocido'), false);
-        $('#tabla-ventas').innerHTML = '';
+        limpiar($('#tabla-ventas'));
         return;
       }
+
       var ventas = resp.data.ventas || [];
-      var html = '<thead><tr><th>Origen</th><th>Producto</th><th class="num">Unidades</th>' +
-        '<th class="num">Total</th></tr></thead><tbody>';
-      ventas.forEach(function (v) {
-        html += '<tr><td>' + raw(v.variedad) + '</td><td>' + raw(v.nombre) + '</td>' +
-          '<td class="num">' + raw(v.unidades) + '</td><td class="num">' + money(v.total) + '</td></tr>';
+      var filas = ventas.map(function (v) {
+        return crearFila([
+          crear('td', null, v.variedad),
+          crear('td', null, v.nombre),
+          crear('td', 'num', v.unidades),
+          crear('td', 'num', money(v.total)),
+        ]);
       });
-      $('#tabla-ventas').innerHTML = html + '</tbody>';
+
+      renderTabla(
+        $('#tabla-ventas'),
+        [
+          { texto: 'Origen' },
+          { texto: 'Producto' },
+          { texto: 'Unidades', clase: 'num' },
+          { texto: 'Total', clase: 'num' },
+        ],
+        filas,
+        'No hay ventas para ese origen.'
+      );
       feedback(caja, 'Consulta realizada.', true);
     });
   }
@@ -336,21 +446,45 @@
   function cargarUsuarios() {
     api('/admin/usuarios').then(function (resp) {
       var usuarios = resp.data.usuarios || [];
-      var html = '<thead><tr><th>#</th><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Acciones</th></tr></thead><tbody>';
-      usuarios.forEach(function (u) {
-        html += '<tr>' +
-          '<td>' + raw(u.id) + '</td>' +
-          '<td>' + raw(u.username) + '</td>' +
-          '<td>' + raw(u.nombre) + '</td>' +
-          '<td><span class="badge' + (u.rol === 'admin' ? ' badge-admin' : '') + '">' + raw(u.rol) + '</span></td>' +
-          '<td><select data-usuario="' + raw(u.id) + '" class="sel-rol">' +
-            ['cliente', 'mozo', 'barista', 'admin'].map(function (r) {
-              return '<option value="' + r + '"' + (r === u.rol ? ' selected' : '') + '>' + r + '</option>';
-            }).join('') +
-            '</select></td>' +
-          '</tr>';
+
+      var filas = usuarios.map(function (u) {
+        var tdRol = crear('td');
+        tdRol.appendChild(crear('span', 'badge' + (u.rol === 'admin' ? ' badge-admin' : ''), u.rol));
+
+        var tdSelect = crear('td');
+        var select = document.createElement('select');
+        select.className = 'sel-rol';
+        select.setAttribute('data-usuario', u.id);
+        ['cliente', 'mozo', 'barista', 'admin'].forEach(function (rol) {
+          var opcion = document.createElement('option');
+          opcion.value = rol;
+          opcion.textContent = rol;
+          opcion.selected = rol === u.rol;
+          select.appendChild(opcion);
+        });
+        tdSelect.appendChild(select);
+
+        return crearFila([
+          crear('td', null, u.id),
+          crear('td', null, u.username),
+          crear('td', null, u.nombre),
+          tdRol,
+          tdSelect,
+        ]);
       });
-      $('#tabla-usuarios').innerHTML = html + '</tbody>';
+
+      renderTabla(
+        $('#tabla-usuarios'),
+        [
+          { texto: '#' },
+          { texto: 'Usuario' },
+          { texto: 'Nombre' },
+          { texto: 'Rol' },
+          { texto: 'Acciones' },
+        ],
+        filas,
+        'No hay usuarios.'
+      );
     });
   }
 
@@ -418,13 +552,10 @@
 
   /* ------------------------------------------------------------------ init */
   function init() {
-    // FALLA (XSS de DOM): se lee un parámetro de la URL y se inyecta con
-    // innerHTML. Al abrir admin.html?vista=<script>...</script> se ejecuta
-    // código en el navegador del admin.
-    var params = new URLSearchParams(window.location.search);
-    var objetivo = params.get('vista');
-    if (objetivo) {
-      $('#panel-bienvenida').innerHTML = 'Panel ' + objetivo;
+    var vistas = ['resumen', 'pedidos', 'productos', 'reportes', 'usuarios', 'herramientas'];
+    var objetivo = new URLSearchParams(window.location.search).get('vista');
+    if (objetivo && vistas.indexOf(objetivo) !== -1) {
+      $('#panel-bienvenida').textContent = 'Panel ' + objetivo;
     }
 
     $('#form-login').addEventListener('submit', iniciarSesion);
