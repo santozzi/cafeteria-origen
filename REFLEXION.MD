@@ -1,0 +1,5 @@
+# Reflexion Santiago De Dios 
+- **No confiar en código generado sin revisión ("vibe coding"):** Las fallas de inyección SQL, falta de validación y contraseñas en texto plano surgieron por copiar código sin auditarlo. En un proyecto real debe haber revisión de código (*code review*) obligatoria antes de mergear.
+- **Consultas parametrizadas y validación por defecto:** Usar siempre consultas parametrizadas (`$1`, `$2`) o un ORM/query builder seguro, y validar tipo, rango y listas blancas en el servidor (nunca confiar en el frontend) para evitar pedidos con montos negativos o filtros manipulables.
+- **Almacenamiento seguro de credenciales:** Nunca guardar contraseñas en texto plano; usar algoritmos de hashing lento con *salt* por usuario (`bcrypt` o `argon2`) desde el primer día.
+- **Pruebas automatizadas de seguridad en CI/CD:** Integrar análisis estático (`check:security`) y tests de seguridad (`test:seguridad`) en el pipeline de integración continua para detectar regresiones antes de llegar a producción.
