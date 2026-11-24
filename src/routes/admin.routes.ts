@@ -1,7 +1,8 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import crypto from 'crypto';
+import { spawn } from 'child_process';
 
 import config from '../config';
 import * as catalogo from '../services/catalogo.service';
@@ -29,6 +30,7 @@ const router = express.Router();
  * -----------------------------------------------------------------------------
  */
 router.use(requiereSesion);
+router.use(requiereRol('admin'));
 
 /** GET /api/admin/usuarios */
 router.get('/usuarios', async (req, res, next) => {
@@ -52,7 +54,16 @@ router.put('/usuarios/:id', async (req, res, next) => {
     const cambios: Partial<Usuario> = {};
     if (username !== undefined) cambios.username = username;
     if (nombre !== undefined) cambios.nombre = nombre;
-    if (rol !== undefined) cambios.rol = rol;
+    const ROLES_PERMITIDOS = ['admin', 'barista', 'mozo', 'cliente'];
+    if (rol !== undefined) {
+      if (!req.usuario || req.usuario.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tenés permisos para cambiar roles.' });
+      }
+      if (!ROLES_PERMITIDOS.includes(rol)) {
+        return res.status(400).json({ error: 'Rol no permitido.' });
+      }
+      cambios.rol = rol;
+    }
     if (password !== undefined) cambios.password = password;
 
     const usuario = await usuarios.actualizar(req.params.id, cambios);
@@ -146,17 +157,36 @@ router.post('/cambiar-contrasena', async (req, res, next) => {
  * shell.
  * -----------------------------------------------------------------------------
  */
+const HOSTS_PERMITIDOS = ['127.0.0.1', 'localhost', 'proveedor.cafeteria.local', 'api.proveedor.local'];
+
 router.post('/probar-conexion', (req, res) => {
   const { host } = req.body || {};
 
-  // FALLA: entrada de usuario concatenada en un comando de shell.
-  const comando = `ping -c 3 ${host}`;
+  if (typeof host !== 'string' || !HOSTS_PERMITIDOS.includes(host)) {
+    return res.status(400).json({ error: 'Host no permitido.' });
+  }
 
-  exec(comando, (error, stdout, stderr) => {
+  const proceso = spawn('ping', ['-c', '3', host], { shell: false });
+  let salida = '';
+  let errorSalida = '';
+
+  proceso.stdout.on('data', (chunk) => {
+    salida += chunk.toString();
+  });
+
+  proceso.stderr.on('data', (chunk) => {
+    errorSalida += chunk.toString();
+  });
+
+  proceso.on('error', (err) => {
+    res.status(500).json({ error: err.message });
+  });
+
+  proceso.on('close', (code) => {
     res.json({
-      comando,
-      salida: stdout,
-      error: stderr || (error ? error.message : null),
+      comando: `ping -c 3 ${host}`,
+      salida,
+      error: errorSalida || (code !== 0 ? `Proceso finalizado con código ${code}` : null),
     });
   });
 });
@@ -177,25 +207,68 @@ router.post('/probar-conexion', (req, res) => {
  * y guardar fuera del árbol web.
  * -----------------------------------------------------------------------------
  */
+const EXTENSIONES_PERMITIDAS = ['.png', '.jpg', '.jpeg', '.webp'];
+const TAMANO_MAX = 2 * 1024 * 1024;
+
+function esImagenValida(buffer: Buffer, extension: string): boolean {
+  if (extension === '.png') {
+    return (
+      buffer.length >= 8 &&
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47
+    );
+  }
+  if (extension === '.jpg' || extension === '.jpeg') {
+    return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (extension === '.webp') {
+    return (
+      buffer.length >= 12 &&
+      buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buffer.subarray(8, 12).toString('ascii') === 'WEBP'
+    );
+  }
+  return false;
+}
+
 router.post('/subir-archivo', express.json({ limit: '8mb' }), (req, res, next) => {
   try {
     const { nombre, contenidoBase64 } = req.body || {};
 
-    if (!nombre || !contenidoBase64) {
+    if (typeof nombre !== 'string' || typeof contenidoBase64 !== 'string' || !nombre || !contenidoBase64) {
       return res.status(400).json({ error: 'Falta el archivo.' });
     }
 
-    // FALLA: sin validación de extensión, MIME ni tamaño.
-    const buffer = Buffer.from(contenidoBase64, 'base64');
-    fs.mkdirSync(config.uploadsDir, { recursive: true });
+    const extension = path.extname(nombre).toLowerCase();
+    if (!EXTENSIONES_PERMITIDAS.includes(extension)) {
+      return res.status(400).json({ error: 'Extensión de archivo no permitida.' });
+    }
 
-    // FALLA: nombre tomado del cliente sin sanear (path traversal).
-    const destino = path.join(config.uploadsDir, nombre);
+    const buffer = Buffer.from(contenidoBase64, 'base64');
+    if (buffer.length === 0 || buffer.length > TAMANO_MAX) {
+      return res.status(400).json({ error: 'Tamaño de archivo no permitido.' });
+    }
+
+    if (!esImagenValida(buffer, extension)) {
+      return res.status(400).json({ error: 'El contenido del archivo no coincide con una imagen válida.' });
+    }
+
+    const dirUploads = path.resolve(config.uploadsDir);
+    fs.mkdirSync(dirUploads, { recursive: true });
+
+    const nombreSeguro = `${crypto.randomUUID()}${extension}`;
+    const destino = path.resolve(dirUploads, nombreSeguro);
+    if (!destino.startsWith(dirUploads + path.sep)) {
+      return res.status(400).json({ error: 'Ruta de archivo inválida.' });
+    }
+
     fs.writeFileSync(destino, buffer);
 
     res.json({
       mensaje: 'Archivo subido.',
-      url: `/uploads/${nombre}`,
+      url: `/uploads/${nombreSeguro}`,
       bytes: buffer.length,
     });
   } catch (err) {
