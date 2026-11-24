@@ -100,11 +100,18 @@ export async function actualizar(
   return rows[0] || null;
 }
 
-/** Cambia la contraseña de un usuario (se guarda en texto plano). */
-export async function cambiarPassword(id: number, nuevaPassword: string): Promise<Usuario | null> {
+/** Cambia la contraseña de un usuario (siempre hasheada). */
+export async function cambiarPassword(
+  id: number,
+  nuevaPassword: string
+): Promise<Usuario | null> {
+  const idValido = entero(id, 'id', 1, ID_MAX);
+  const password = texto(nuevaPassword, 'contraseña', 8, 72);
+  const hash = await bcrypt.hash(password, COSTO_BCRYPT);
+
   const { rows } = await db.query<Usuario>(
     'UPDATE usuarios SET password = $1 WHERE id = $2 RETURNING *',
-    [nuevaPassword, id]
+    [hash, idValido]
   );
   return rows[0] || null;
 }
