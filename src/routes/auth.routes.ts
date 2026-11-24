@@ -1,6 +1,6 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
-import { crearSesion, destruirSesion, obtenerSesion } from '../middleware/sesion';
+import { crearSesion, destruirSesion, obtenerSesion, limpiarCookieSesion } from '../middleware/sesion';
 
 const router = express.Router();
 
@@ -72,12 +72,15 @@ router.post('/logout', (req, res) => {
 });
 
 /** Devuelve el usuario de la sesión actual. */
-router.get('/yo', (req, res) => {
-  const sesion = obtenerSesion(req);
-  if (!sesion) {
-    return res.status(401).json({ error: 'Necesitás iniciar sesión.' });
-  }
-  res.json({ usuario: sesion.usuario });
+
+router.post('/logout', (req, res) => {
+  // Elimina la sesión almacenada en el servidor.
+  destruirSesion(req);
+
+  // Elimina la cookie del navegador.
+  limpiarCookieSesion(res);
+
+  res.json({ mensaje: 'Sesión cerrada.' });
 });
 
 export default router;
