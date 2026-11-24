@@ -63,24 +63,38 @@ export async function listar(): Promise<Usuario[]> {
   return rows;
 }
 
-/**
- * Actualiza un usuario.
- * FALLA — Asignación masiva / escalada de privilegios: se actualiza el rol
- * sin verificar que quien llama tenga permiso para hacerlo.
- */
-export async function actualizar(id: number | string, cambios: Partial<Usuario>): Promise<Usuario | null> {
+/** Actualiza un usuario. La contraseña, si viene, se guarda hasheada. */
+export async function actualizar(
+  id: number | string,
+  cambios: Partial<Usuario>
+): Promise<Usuario | null> {
+  const idValido = entero(id, 'id', 1, ID_MAX);
   const campos: string[] = [];
   const valores: unknown[] = [];
-  let i = 1;
-  for (const [campo, valor] of Object.entries(cambios)) {
-    campos.push(`${campo} = $${i}`);
-    valores.push(valor);
-    i += 1;
+
+  if (cambios.username !== undefined) {
+    campos.push(`username = $${valores.length + 1}`);
+    valores.push(texto(cambios.username, 'username', 3, 40));
   }
+  if (cambios.nombre !== undefined) {
+    campos.push(`nombre = $${valores.length + 1}`);
+    valores.push(texto(cambios.nombre, 'nombre', 2, 80));
+  }
+  if (cambios.rol !== undefined) {
+    campos.push(`rol = $${valores.length + 1}`);
+    valores.push(unoDe(cambios.rol, ALLOWED_ROLES, 'rol'));
+  }
+  if (cambios.password !== undefined) {
+    const password = texto(cambios.password, 'contraseña', 8, 72);
+    campos.push(`password = $${valores.length + 1}`);
+    valores.push(await bcrypt.hash(password, COSTO_BCRYPT));
+  }
+
   if (campos.length === 0) return null;
-  valores.push(id);
+
+  valores.push(idValido);
   const { rows } = await db.query<Usuario>(
-    `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${i} RETURNING *`,
+    `UPDATE usuarios SET ${campos.join(', ')} WHERE id = $${valores.length} RETURNING *`,
     valores
   );
   return rows[0] || null;
