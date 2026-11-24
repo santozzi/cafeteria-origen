@@ -2,6 +2,7 @@ import path from 'path';
 import express from 'express';
 
 import config from './config';
+import { emitirTokenCsrf, validarCsrf } from './middleware/csrf';
 import { rutaNoEncontrada, manejadorErrores } from './middleware/errores';
 import authRoutes from './routes/auth.routes';
 import productosRoutes from './routes/productos.routes';
@@ -25,6 +26,10 @@ const app = express();
  */
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Token anti-CSRF para los formularios del front.
+app.get('/api/csrf-token', emitirTokenCsrf);
+app.use(validarCsrf);
 
 // Archivos subidos por el panel de administración.
 app.use('/uploads', express.static(config.uploadsDir));
