@@ -58,9 +58,21 @@ export function leerCookies(req: Request): Record<string, string> {
   return cookies;
 }
 
+
+
 /** Crea una sesión nueva para el usuario y setea la cookie. */
-export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion): string {
-  contadorSesiones += 1;
+export function crearSesion(
+  req: Request,
+  res: Response,
+  usuario: UsuarioSesion
+): string {
+
+
+// Elimina una sesión anterior asociada a la cookie recibida.
+const cookies = leerCookies(req);
+if (cookies.sid) {
+  sesiones.delete(cookies.sid);
+}
 
   // FALLA: identificador predecible.
   const id = randomUUID(); //(corregido) 
