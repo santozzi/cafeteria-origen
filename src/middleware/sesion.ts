@@ -26,6 +26,8 @@ import type { Request, Response } from 'express';
 
 import type { Sesion, UsuarioSesion } from '../tipos';
 
+import { randomUUID } from 'node:crypto';
+
 export const sesiones = new Map<string, Sesion>();
 let contadorSesiones = 0;
 
@@ -49,7 +51,7 @@ export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion)
   contadorSesiones += 1;
 
   // FALLA: identificador predecible.
-  const id = `sesion_${contadorSesiones}`;
+  const id = randomUUID(); //(corregido) 
 
   // FALLA: la sesión nunca expira.
   sesiones.set(id, {
