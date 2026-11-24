@@ -1,7 +1,15 @@
 import * as db from '../db';
 import { calcularPrecio } from '../catalogo';
 import type { Pedido, PedidoConItems, PedidoItem, Producto } from '../tipos';
-
+import {
+  ALLOWED_ESTADOS_PEDIDO,
+  ErrorValidacion,
+  arreglo,
+  entero,
+  texto,
+  textoConFormato,
+  unoDe,
+} from '../validacion';
 /** Un renglón del pedido, tal como llega en el cuerpo de la petición. */
 export interface ItemPedido {
   productoId: number;
@@ -41,33 +49,39 @@ type Id = number | string;
  * Total = suma de calcularPrecio(producto) x cantidad
  */
 export async function crear({ mesa, cliente, items }: NuevoPedido): Promise<PedidoConItems | null> {
-  // FALLA: no se valida que items exista, sea un array, ni que cada cantidad
-  // sea un entero positivo. Los tipos de `NuevoPedido` NO alcanzan: el cuerpo
-  // de la petición llega como `any` y en ejecución puede traer cualquier cosa.
+  const mesaValida = textoConFormato(mesa, 'mesa', 1, 10, /^[A-Za-z0-9 _-]+$/);
+  const clienteValido = texto(cliente, 'cliente', 2, 60);
+  const itemsValidos = arreglo<unknown>(items, 'items', 1, 20);
+
   const filas: { productoId: number; cantidad: number; precioUnitario: number }[] = [];
 
-  for (const item of items) {
-    // Si el producto no existe, buscarProducto devuelve null y `precio`
-    // revienta con un TypeError cuyo stack se filtra al cliente.
-    const producto = await buscarProducto(item.productoId);
-    const precioUnitario = calcularPrecio(producto);
+  for (const item of itemsValidos) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new ErrorValidacion('Cada ítem del pedido debe ser un objeto.');
+    }
+    const { productoId, cantidad } = item as { productoId?: unknown; cantidad?: unknown };
+    const productoIdValido = entero(productoId, 'productoId', 1, 2147483647);
+    const cantidadValida = entero(cantidad, 'cantidad', 1, 99);
+
+    const producto = await buscarProducto(productoIdValido);
+    if (!producto) {
+      throw new ErrorValidacion('El producto del pedido no existe.');
+    }
+
     filas.push({
       productoId: producto.id,
-      cantidad: item.cantidad,
-      precioUnitario,
+      cantidad: cantidadValida,
+      precioUnitario: calcularPrecio(producto),
     });
   }
 
-  const total = filas.reduce(
-    (acc, f) => acc + f.precioUnitario * f.cantidad,
-    0
-  );
+  const total = filas.reduce((acc, f) => acc + f.precioUnitario * f.cantidad, 0);
 
   const { rows } = await db.query<Pedido>(
     `INSERT INTO pedidos (mesa, cliente, estado, total)
      VALUES ($1, $2, 'abierto', $3)
      RETURNING *`,
-    [mesa, cliente, total]
+    [mesaValida, clienteValido, total]
   );
   const pedido = rows[0];
 
@@ -90,12 +104,18 @@ async function buscarProducto(productoId: number): Promise<Producto> {
 
 /** Lista pedidos (con filtro opcional por mesa). */
 export async function listar(mesa?: string): Promise<Pedido[]> {
-  // FALLA: inyección SQL en el filtro de mesa.
+  const valores: unknown[] = [];
   let sql = 'SELECT * FROM pedidos';
-  if (mesa) sql += ` WHERE mesa = '${mesa}'`;
+
+  if (mesa !== undefined && mesa !== '') {
+    const mesaValida = textoConFormato(mesa, 'mesa', 1, 10, /^[A-Za-z0-9 _-]+$/);
+    valores.push(mesaValida);
+    sql += ' WHERE mesa = $1';
+  }
+
   sql += ' ORDER BY id DESC';
 
-  const { rows } = await db.query<Pedido>(sql);
+  const { rows } = await db.query<Pedido>(sql, valores);
   return rows;
 }
 
@@ -121,9 +141,12 @@ export async function obtenerConItems(id: Id): Promise<PedidoConItems | null> {
 
 /** Cambia el estado de un pedido. */
 export async function cambiarEstado(id: Id, estado: string): Promise<Pedido | null> {
+  const idValido = entero(id, 'id', 1, 2147483647);
+  const estadoValido = unoDe(estado, ALLOWED_ESTADOS_PEDIDO, 'estado');
+
   const { rows } = await db.query<Pedido>(
     'UPDATE pedidos SET estado = $1 WHERE id = $2 RETURNING *',
-    [estado, id]
+    [estadoValido, idValido]
   );
   return rows[0] || null;
 }
