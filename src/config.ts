@@ -21,11 +21,8 @@ export default {
     host: process.env.DB_HOST || 'db',
     port: Number(process.env.DB_PORT || 5432),
     database: process.env.DB_NAME || 'origen',
-    // FALLA: la aplicación se conecta con el superusuario de la base de datos
-    // (mínimos privilegios). Existe un usuario `origen_app` con permisos
-    // reducidos para usar como corrección.
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
+    user: process.env.DB_USER || 'origen_app',
+    password: process.env.DB_PASSWORD || '',
   },
 
   // FALLA: secreto fijo y predecible, escrito en el código.
