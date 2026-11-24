@@ -1,7 +1,14 @@
 import * as db from '../db';
 import { calcularPrecio } from '../catalogo';
 import type { Pedido, PedidoConItems, PedidoItem, Producto } from '../tipos';
-
+import {
+  ALLOWED_ESTADOS_PEDIDO,
+  arreglo,
+  entero,
+  texto,
+  textoConFormato,
+  unoDe,
+} from '../validacion';
 /** Un renglón del pedido, tal como llega en el cuerpo de la petición. */
 export interface ItemPedido {
   productoId: number;
