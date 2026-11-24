@@ -1,6 +1,14 @@
+import bcrypt from 'bcryptjs';
+
 import * as db from './db';
 import { CATALOGO } from './catalogo';
 import type { Rol } from './tipos';
+
+const COSTO_BCRYPT = 12;
+
+function esHashBcrypt(valor: string): boolean {
+  return /^\$2[aby]\$\d{2}\$/.test(valor);
+}
 
 interface UsuarioInicial {
   username: string;
