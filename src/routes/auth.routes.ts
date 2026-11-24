@@ -67,18 +67,26 @@ router.post('/login', limiterLogin, async (req, res, next) => {
   }
 });
 
-/**
- * Cierre de sesión.
- *
- * FALLA: sólo borra la cookie del navegador. La sesión sigue existiendo en el
- * servidor, así que con la cookie robada se puede seguir usando.
+
+ /* Devuelve el usuario de la sesión actual.
  */
-router.post('/logout', (req, res) => {
-  res.clearCookie('sid', { path: '/' });
-  res.json({ mensaje: 'Sesión cerrada.' });
+router.get('/yo', (req, res) => {
+  const sesion = obtenerSesion(req);
+
+  // Si no existe una sesión válida, rechaza el acceso.
+  if (!sesion) {
+    return res.status(401).json({
+      error: 'No hay una sesión activa.',
+    });
+  }
+
+  // Devuelve los datos del usuario autenticado.
+  return res.json({
+    usuario: sesion.usuario,
+  });
 });
 
-/** Devuelve el usuario de la sesión actual. */
+
 
 router.post('/logout', (req, res) => {
   // Elimina la sesión almacenada en el servidor.
