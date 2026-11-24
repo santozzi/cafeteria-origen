@@ -28,6 +28,16 @@ import type { Sesion, UsuarioSesion } from '../tipos';
 
 import { randomUUID } from 'node:crypto';
 
+//configuracion de la seguridad de la cookie
+const secureCookie = process.env.NODE_ENV === 'production';
+
+const opcionesCookie = {
+  path: '/', ///define que la cookie es válida en toda la aplicación
+  httpOnly: true, //impide que js pueda acceder a la cookie
+  secure: secureCookie, //exige https en producción
+  sameSite: 'lax' as const, //ayuda a prevenir ataques CSRF
+};
+
 export const sesiones = new Map<string, Sesion>();
 let contadorSesiones = 0;
 
@@ -61,8 +71,7 @@ export function crearSesion(req: Request, res: Response, usuario: UsuarioSesion)
   });
 
   // FALLA: cookie sin httpOnly / secure / sameSite.
-  res.cookie('sid', id, { path: '/' });
-
+  res.cookie('sid', id, opcionesCookie); //configura la cookie con las opciones de seguridad definidas
   return id;
 }
 
