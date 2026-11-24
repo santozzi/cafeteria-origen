@@ -131,3 +131,8 @@ export function destruirSesion(req: Request): void {
   const id = cookies.sid;
   if (id) sesiones.delete(id);
 }
+
+/** Elimina la cookie de sesión del navegador.*/
+export function limpiarCookieSesion(res: Response): void {
+  res.clearCookie('sid', opcionesCookie);
+}
