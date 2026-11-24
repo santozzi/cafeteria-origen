@@ -1,13 +1,14 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import crypto from 'crypto';
+import { execFile } from 'child_process';
 
 import config from '../config';
 import * as catalogo from '../services/catalogo.service';
 import * as usuarios from '../services/usuarios.service';
 import { requiereSesion, requiereRol } from '../middleware/auth';
-import type { Usuario } from '../tipos';
+import type { Rol, Usuario } from '../tipos';
 
 const router = express.Router();
 
@@ -29,6 +30,9 @@ const router = express.Router();
  * -----------------------------------------------------------------------------
  */
 router.use(requiereSesion);
+router.use(requiereRol('admin'));
+
+const ROLES_VALIDOS: Rol[] = ['admin', 'barista', 'mozo', 'cliente'];
 
 /** GET /api/admin/usuarios */
 router.get('/usuarios', async (req, res, next) => {
@@ -52,7 +56,19 @@ router.put('/usuarios/:id', async (req, res, next) => {
     const cambios: Partial<Usuario> = {};
     if (username !== undefined) cambios.username = username;
     if (nombre !== undefined) cambios.nombre = nombre;
-    if (rol !== undefined) cambios.rol = rol;
+        if (rol !== undefined) {
+      // Sólo un admin cambia roles, nunca el suyo propio, y sólo a un rol que exista.
+      if (!req.usuario || req.usuario.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tenés permisos para cambiar roles.' });
+      }
+      if (String(req.usuario.id) === String(req.params.id)) {
+        return res.status(403).json({ error: 'No podés cambiar tu propio rol.' });
+      }
+      if (!ROLES_VALIDOS.includes(rol)) {
+        return res.status(400).json({ error: 'Rol inválido.' });
+      }
+      cambios.rol = rol;
+    }
     if (password !== undefined) cambios.password = password;
 
     const usuario = await usuarios.actualizar(req.params.id, cambios);
@@ -146,17 +162,23 @@ router.post('/cambiar-contrasena', async (req, res, next) => {
  * shell.
  * -----------------------------------------------------------------------------
  */
+// Lista blanca: sólo se puede probar la conexión contra estos hosts.
+const HOSTS_PERMITIDOS = ['proveedor.origen.com', 'db', '127.0.0.1'];
+
 router.post('/probar-conexion', (req, res) => {
   const { host } = req.body || {};
 
-  // FALLA: entrada de usuario concatenada en un comando de shell.
-  const comando = `ping -c 3 ${host}`;
+  if (typeof host !== 'string' || !HOSTS_PERMITIDOS.includes(host)) {
+    return res.status(400).json({ error: 'Host no permitido.' });
+  }
 
-  exec(comando, (error, stdout, stderr) => {
+  // execFile no pasa por el shell: el host llega como UN argumento de ping,
+  // así que ; | && $() no se interpretan.
+  execFile('ping', ['-c', '3', host], { timeout: 10000 }, (error, stdout, stderr) => {
     res.json({
-      comando,
+      comando: `ping -c 3 ${host}`,
       salida: stdout,
-      error: stderr || (error ? error.message : null),
+      error: stderr || (error ? 'No se pudo completar el ping.' : null),
     });
   });
 });
@@ -177,25 +199,55 @@ router.post('/probar-conexion', (req, res) => {
  * y guardar fuera del árbol web.
  * -----------------------------------------------------------------------------
  */
-router.post('/subir-archivo', express.json({ limit: '8mb' }), (req, res, next) => {
+// Sólo imágenes, hasta 2 MB.
+const EXTENSIONES_PERMITIDAS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+const TAMANO_MAX = 2 * 1024 * 1024;
+
+/** Mira los primeros bytes del archivo ("magic numbers") para saber qué es en realidad. */
+function esImagenReal(buffer: Buffer): boolean {
+  const hex = buffer.subarray(0, 12).toString('hex');
+  return (
+    hex.startsWith('89504e47') || // PNG
+    hex.startsWith('ffd8ff') || // JPEG
+    hex.startsWith('47494638') || // GIF
+    (hex.startsWith('52494646') && hex.slice(16, 24) === '57454250') // WEBP
+  );
+}
+
+router.post('/subir-archivo', express.json({ limit: '3mb' }), (req, res, next) => {
   try {
     const { nombre, contenidoBase64 } = req.body || {};
 
-    if (!nombre || !contenidoBase64) {
+    if (typeof nombre !== 'string' || typeof contenidoBase64 !== 'string') {
       return res.status(400).json({ error: 'Falta el archivo.' });
     }
 
-    // FALLA: sin validación de extensión, MIME ni tamaño.
-    const buffer = Buffer.from(contenidoBase64, 'base64');
-    fs.mkdirSync(config.uploadsDir, { recursive: true });
+    // 1. Extensión contra lista blanca.
+    const extension = path.extname(nombre).toLowerCase();
+    if (!EXTENSIONES_PERMITIDAS.includes(extension)) {
+      return res.status(400).json({ error: 'Tipo de archivo no permitido.' });
+    }
 
-    // FALLA: nombre tomado del cliente sin sanear (path traversal).
-    const destino = path.join(config.uploadsDir, nombre);
-    fs.writeFileSync(destino, buffer);
+    // 2. Tamaño máximo.
+    const buffer = Buffer.from(contenidoBase64, 'base64');
+    if (buffer.length === 0 || buffer.length > TAMANO_MAX) {
+      return res.status(413).json({ error: 'El archivo supera los 2 MB o está vacío.' });
+    }
+
+    // 3. Tipo real (MIME) por el contenido, no por el nombre.
+    if (!esImagenReal(buffer)) {
+      return res.status(400).json({ error: 'El contenido no es una imagen válida.' });
+    }
+
+    // 4. Nombre aleatorio generado por el servidor: el del cliente no se usa
+    //    para escribir, así que "../" no sirve para salir de uploads.
+    const nombreSeguro = `${crypto.randomUUID()}${extension}`;
+    fs.mkdirSync(config.uploadsDir, { recursive: true });
+    fs.writeFileSync(path.join(config.uploadsDir, nombreSeguro), buffer);
 
     res.json({
       mensaje: 'Archivo subido.',
-      url: `/uploads/${nombre}`,
+      url: `/uploads/${nombreSeguro}`,
       bytes: buffer.length,
     });
   } catch (err) {

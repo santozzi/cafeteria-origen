@@ -22,11 +22,13 @@ export function rutaNoEncontrada(req: Request, res: Response): void {
 // tiene que estar aunque no se use.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function manejadorErrores(err: ErrorHttp, req: Request, res: Response, next: NextFunction): void {
-  console.error('[error]', err.message);
+  // El detalle completo queda sólo en el log del servidor.
+  console.error('[error]', err.stack || err.message);
 
-  // FALLA: se filtra el stack trace al cliente.
-  res.status(err.status || 500).json({
-    error: err.message,
-    stack: err.stack,
-  });
+  // Errores 4xx: son nuestros (validaciones) y el mensaje sirve al cliente.
+  // Cualquier otro: mensaje genérico, sin stack ni detalles internos.
+  const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 500;
+  const mensaje = status < 500 ? err.message : 'Error interno del servidor.';
+
+  res.status(status).json({ error: mensaje });
 }

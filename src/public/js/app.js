@@ -29,9 +29,39 @@
     return String(valor == null ? '' : valor);
   }
 
-  function api(url, opciones) {
-    return fetch(API + url, opciones).then(function (res) {
+    // Token anti-CSRF de la sesión actual (se pide al servidor, no se fija en el HTML).
+  var csrfToken = null;
+
+  function obtenerCsrf() {
+    if (csrfToken) return Promise.resolve(csrfToken);
+    return fetch(API + '/csrf-token', { credentials: 'same-origin' })
+      .then(function (res) { return res.ok ? res.json() : {}; })
+      .then(function (data) {
+        csrfToken = data.token || null; // null si no hay sesión
+        return csrfToken;
+      })
+      .catch(function () { return null; });
+  }
+
+  function api(url, opciones, reintento) {
+    opciones = Object.assign({ credentials: 'same-origin' }, opciones || {});
+    var metodo = (opciones.method || 'GET').toUpperCase();
+    var cambiaEstado = ['GET', 'HEAD', 'OPTIONS'].indexOf(metodo) === -1;
+
+    return (cambiaEstado ? obtenerCsrf() : Promise.resolve(null)).then(function (token) {
+      if (token) {
+        opciones.headers = Object.assign({}, opciones.headers, { 'X-CSRF-Token': token });
+      }
+      return fetch(API + url, opciones);
+    }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (data) {
+       
+        if (url === '/auth/login' || url === '/auth/logout') csrfToken = null;
+       
+        if (res.status === 403 && data.codigo === 'CSRF' && !reintento) {
+          csrfToken = null;
+          return api(url, opciones, true);
+        }
         return { ok: res.ok, status: res.status, data: data };
       });
     });

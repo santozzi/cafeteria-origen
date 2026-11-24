@@ -1,6 +1,11 @@
 import express from 'express';
 import * as usuarios from '../services/usuarios.service';
-import { crearSesion, destruirSesion, obtenerSesion } from '../middleware/sesion';
+import {
+  crearSesion,
+  destruirSesion,
+  limpiarCookieSesion,
+  obtenerSesion,
+} from '../middleware/sesion';
 
 const router = express.Router();
 
@@ -63,11 +68,12 @@ router.post('/login', async (req, res, next) => {
 /**
  * Cierre de sesión.
  *
- * FALLA: sólo borra la cookie del navegador. La sesión sigue existiendo en el
- * servidor, así que con la cookie robada se puede seguir usando.
+ * Borra la sesión del almacén del servidor (así una cookie robada deja de
+ * servir) y también la cookie del navegador.
  */
 router.post('/logout', (req, res) => {
-  res.clearCookie('sid', { path: '/' });
+  destruirSesion(req);
+  limpiarCookieSesion(res);
   res.json({ mensaje: 'Sesión cerrada.' });
 });
 
