@@ -11,10 +11,7 @@
 - **La base también es parte de la seguridad:** la app tiene que conectarse con un usuario limitado (`origen_app`), no con el superusuario, y las contraseñas/secretos tienen que salir del entorno. Un secreto hardcodeado es un secreto que ya no es secreto.
 - **Los tests y el checker sirven para no volver atrás:** correr la batería de seguridad y el análisis estático después de cada cambio mostró que un arreglo en el cliente no siempre alcanza; hay que revisar también lo que devuelve el servidor.
 
-# Reflexión Renata Turani
-
 # Reflexion Renata Turani
-
 - **No alcanza con pedir que inicien sesión:** si no revisás qué rol tiene cada usuario, un cliente común puede entrar al panel de administración o mandarse `"rol": "admin"` para darse permisos. En un proyecto real hay que chequear el rol (`requiereRol('admin')`) en todas las rutas del panel y controlar quién puede cambiar roles.
 - **Nunca armar comandos con lo que escribe el usuario:** usar `exec` pegando directo el texto del `host` permite que cualquiera agregue `;` o `&&` y ejecute comandos en el servidor. La solución fue cambiarlo por `spawn` pasando los datos por separado y dejar una lista fija de servidores permitidos.
 - **Revisar bien lo que se sube al servidor:** dejar que el usuario elija el nombre del archivo y suba cualquier extensión permite guardar archivos fuera de `uploads` usando `../` o subir un `.html` que después se ejecuta en la misma página. En un proyecto real hay que limitar el peso, verificar que sea una imagen de verdad y ponerle un nombre nuevo generado desde el servidor.
